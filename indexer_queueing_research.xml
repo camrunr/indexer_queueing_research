@@ -1,0 +1,179 @@
+<form>
+  <label>Indexer Queuing Research</label>
+  <search id="idx_load_thru">
+    <query>index=_internal source=*metrics* host=$txt_indexer_match$ splunk_server=$txt_indexer_match$ (group=thruput name=thruput) 
+  | bucket _time span=$txt_span$ 
+  | stats sum(kb) as KB max(load_average) as Load by _time host</query>
+    <earliest>$timepicker.earliest$</earliest>
+    <latest>$timepicker.latest$</latest>
+  </search>
+  <search id="iostats">
+    <query>index=main sourcetype=iostat_x host=$txt_indexer_match$ splunk_server=$txt_indexer_match$
+  | bucket _time span=$txt_span$
+  | stats max(dev_util_perc) as util max(dev_w_await) as wait by _time host</query>
+    <earliest>$timepicker.earliest$</earliest>
+    <latest>$timepicker.latest$</latest>
+  </search>
+  <fieldset submitButton="false">
+    <input type="text" token="txt_indexer_match" searchWhenChanged="true">
+      <label>Indexer Match</label>
+      <default>indexer*</default>
+      <initialValue>indexer*</initialValue>
+    </input>
+    <input type="text" token="txt_span" searchWhenChanged="true">
+      <label>Span</label>
+      <default>30s</default>
+      <initialValue>30s</initialValue>
+    </input>
+    <input type="time" token="timepicker" searchWhenChanged="true">
+      <label></label>
+      <default>
+        <earliest>-60m@m</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+  </fieldset>
+  <row>
+    <panel>
+      <title>Indexing Queue Status</title>
+      <chart>
+        <search>
+          <query>index=_internal host=$txt_indexer_match$ splunk_server=$txt_indexer_match$ group=queue name=indexqueue
+| timechart span=$txt_span$ max(eval(100*(round(current_size_kb/max_size_kb,2)))) as Queue_Percentage by host</query>
+          <earliest>$timepicker.earliest$</earliest>
+          <latest>$timepicker.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.overflowMode">ellipsisNone</option>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">0</option>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.axisTitleY.visibility">visible</option>
+        <option name="charting.axisTitleY2.visibility">visible</option>
+        <option name="charting.axisX.abbreviation">none</option>
+        <option name="charting.axisX.scale">linear</option>
+        <option name="charting.axisY.abbreviation">none</option>
+        <option name="charting.axisY.maximumNumber">100</option>
+        <option name="charting.axisY.scale">linear</option>
+        <option name="charting.axisY2.abbreviation">none</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.axisY2.scale">inherit</option>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.bubbleMaximumSize">50</option>
+        <option name="charting.chart.bubbleMinimumSize">10</option>
+        <option name="charting.chart.bubbleSizeBy">area</option>
+        <option name="charting.chart.nullValueMode">gaps</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.chart.sliceCollapsingThreshold">0.01</option>
+        <option name="charting.chart.stackMode">default</option>
+        <option name="charting.chart.style">shiny</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="charting.layout.splitSeries.allowIndependentYRanges">0</option>
+        <option name="charting.legend.labelStyle.overflowMode">ellipsisMiddle</option>
+        <option name="charting.legend.mode">standard</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="charting.lineWidth">2</option>
+        <option name="height">300</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="trellis.enabled">0</option>
+        <option name="trellis.scales.shared">1</option>
+        <option name="trellis.size">medium</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Storage Device</title>
+      <chart>
+        <title>Util</title>
+        <search base="iostats">
+          <query>timechart span=$txt_span$ last(util) as util by host</query>
+        </search>
+        <option name="charting.axisY.maximumNumber">100</option>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="height">150</option>
+      </chart>
+      <chart>
+        <title>Avg Wait to Write</title>
+        <search base="iostats">
+          <query>timechart span=$txt_span$ last(wait) as wait by host</query>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="height">150</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Indexing Lag</title>
+      <chart>
+        <search>
+          <query>| tstats count where splunk_server=$txt_indexer_match$ ((host=$txt_indexer_match$ index=_internal) OR index=main) by _indextime, _time span=1s
+| eval lag=_indextime-_time
+| rangemap field=lag 0s-10s="0-10" 10s-20s="10-20" 20s-2m="20-120" 2m-1h="120-3500" default="bad TZ?"
+| timechart span=$txt_span$ count by range
+| eval "0s-10s"=coalesce('0s-10s',0),
+       "10s-20s"=coalesce('10s-20s',0),
+       "20s-2m"=coalesce('20s-2m',0),
+       "2m-1h"=coalesce('2m-1h',0)</query>
+          <earliest>$timepicker.earliest$</earliest>
+          <latest>$timepicker.latest$</latest>
+        </search>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked100</option>
+        <option name="charting.drilldown">none</option>
+        <option name="height">300</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Indexing Thruput and Load</title>
+      <chart>
+        <title>KB/s</title>
+        <search base="idx_load_thru">
+          <query>timechart span=$txt_span$ per_second(KB) as KB/s by host</query>
+        </search>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="height">150</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+      <chart>
+        <title>Load</title>
+        <search base="idx_load_thru">
+          <query>timechart span=$txt_span$ avg(Load) as Load by host</query>
+        </search>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="height">150</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>WARNs and ERRORs from Indexers</title>
+      <table>
+        <search>
+          <query>index=_internal sourcetype=splunkd log_level IN (WARN ERROR) host=$txt_indexer_match$ splunk_server=$txt_indexer_match$ 
+| rex "\s-\s(?&lt;Msg&gt;.*)"
+| stats latest(_time) as _time count latest(Msg) as Sample values(host) as indexers by log_level component punct
+| fields _time component log_level indexers count Sample
+| sort - count</query>
+          <earliest>$timepicker.earliest$</earliest>
+          <latest>$timepicker.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+</form>
