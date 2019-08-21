@@ -1,5 +1,5 @@
-<form>
-  <label>Indexer Queuing Research</label>
+<form theme="dark" refresh="300">
+  <label>Indexer Queuing</label>
   <search id="idx_load_thru">
     <query>index=_internal source=*metrics* host=$txt_indexer_match$ splunk_server=$txt_indexer_match$ (group=thruput name=thruput) 
   | bucket _time span=$txt_span$ 
@@ -14,11 +14,18 @@
     <earliest>$timepicker.earliest$</earliest>
     <latest>$timepicker.latest$</latest>
   </search>
+  <search id="cachemgr">
+    <query>index=_internal cachemanager host=$txt_indexer_match$ splunk_server=$txt_indexer_match$ source=*splunkd.log* action IN (upload download)
+| bucket _time span=$txt_span$
+| stats sum(kb) as KB by _time host status action</query>
+    <earliest>$timepicker.earliest$</earliest>
+    <latest>$timepicker.latest$</latest>
+  </search>
   <fieldset submitButton="false">
     <input type="text" token="txt_indexer_match" searchWhenChanged="true">
       <label>Indexer Match</label>
-      <default>indexer*</default>
-      <initialValue>indexer*</initialValue>
+      <default>indexermatch*</default>
+      <initialValue>cdlsplnkidx*</initialValue>
     </input>
     <input type="text" token="txt_span" searchWhenChanged="true">
       <label>Span</label>
@@ -35,11 +42,36 @@
   </fieldset>
   <row>
     <panel>
-      <title>Indexing Queue Status</title>
+      <html>
+      <h3>Queues</h3>
+      indexQueue percentages for each host over timperiod. If the timeperiod selected ends with 'now', the last reading will be live from indexers' API port
+    </html>
+    </panel>
+    <panel>
+      <html>
+      <h3>IO Stats</h3>
+      Stats from iostat -x: Average write wait time (ideally under 20ms), and total device IO utilization
+    </html>
+    </panel>
+  </row>
+  <row>
+    <panel>
       <chart>
         <search>
           <query>index=_internal host=$txt_indexer_match$ splunk_server=$txt_indexer_match$ group=queue name=indexqueue
-| timechart span=$txt_span$ max(eval(100*(round(current_size_kb/max_size_kb,2)))) as Queue_Percentage by host</query>
+| bucket _time span=$txt_span$
+| stats max(eval(100*(round(current_size_kb/max_size_kb,2)))) as fill_perc by _time host
+| append [ 
+   rest splunk_server=$txt_indexer_match$ /services/server/introspection/queues
+   | search title=indexQueue*
+   | eval fill_perc=round(current_size_bytes / max_size_bytes * 100,2), _time=now(), title=replace(title,"\.\d+","")
+   | fields _time, splunk_server, title, fill_perc
+   | stats max(fill_perc) as fill_perc by _time title splunk_server
+   | rename splunk_server as host
+   | fields _time host fill_perc ]
+| timechart span=$txt_span$ max(fill_perc) by host
+| delta _time as SPAN | eventstats mode(SPAN) as mSPAN
+| where SPAN&lt;=(2*mSPAN) | fields - SPAN mSPAN</query>
           <earliest>$timepicker.earliest$</earliest>
           <latest>$timepicker.latest$</latest>
           <sampleRatio>1</sampleRatio>
@@ -81,36 +113,52 @@
       </chart>
     </panel>
     <panel>
-      <title>Storage Device</title>
       <chart>
         <title>Util</title>
         <search base="iostats">
           <query>timechart span=$txt_span$ last(util) as util by host</query>
         </search>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
         <option name="charting.axisY.maximumNumber">100</option>
         <option name="charting.chart">line</option>
         <option name="charting.drilldown">none</option>
-        <option name="refresh.display">progressbar</option>
+        <option name="charting.legend.mode">standard</option>
         <option name="height">150</option>
+        <option name="refresh.display">progressbar</option>
       </chart>
       <chart>
         <title>Avg Wait to Write</title>
         <search base="iostats">
           <query>timechart span=$txt_span$ last(wait) as wait by host</query>
         </search>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
         <option name="charting.chart">line</option>
         <option name="charting.drilldown">none</option>
-        <option name="refresh.display">progressbar</option>
         <option name="height">150</option>
+        <option name="refresh.display">progressbar</option>
       </chart>
     </panel>
   </row>
   <row>
     <panel>
-      <title>Indexing Lag</title>
+      <html>
+      <h3>Lag</h3>
+      How long is indexing new events taking? (Estimated) % of events in time ranges below. Considering events only from _internal and _introspection on Splunk infrastructure.
+    </html>
+    </panel>
+    <panel>
+      <html>
+      <h3>Throughput and Load</h3>
+      Volume in Bytes/S and indexer load
+    </html>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title></title>
       <chart>
         <search>
-          <query>| tstats count where splunk_server=$txt_indexer_match$ ((host=$txt_indexer_match$ index=_internal) OR index=main) by _indextime, _time span=1s
+          <query>| tstats count where splunk_server=$txt_indexer_match$ host=*spl* index IN (_internal _introspection) by _indextime, _time span=1s
 | eval lag=_indextime-_time
 | rangemap field=lag 0s-10s="0-10" 10s-20s="10-20" 20s-2m="20-120" 2m-1h="120-3500" default="bad TZ?"
 | timechart span=$txt_span$ count by range
@@ -126,18 +174,22 @@
         <option name="charting.chart.stackMode">stacked100</option>
         <option name="charting.drilldown">none</option>
         <option name="height">300</option>
+        <option name="refresh.display">progressbar</option>
       </chart>
     </panel>
     <panel>
-      <title>Indexing Thruput and Load</title>
+      <title></title>
       <chart>
-        <title>KB/s</title>
+        <title>Throughput</title>
         <search base="idx_load_thru">
-          <query>timechart span=$txt_span$ per_second(KB) as KB/s by host</query>
+          <query>timechart span=$txt_span$ per_second(eval(KB*1024)) as B/s by host</query>
         </search>
+        <option name="charting.axisTitleX.text">Throughput</option>
         <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.axisY.abbreviation">auto</option>
         <option name="charting.axisY2.enabled">0</option>
-        <option name="charting.chart">line</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
         <option name="charting.drilldown">none</option>
         <option name="charting.layout.splitSeries">0</option>
         <option name="height">150</option>
@@ -148,6 +200,7 @@
         <search base="idx_load_thru">
           <query>timechart span=$txt_span$ avg(Load) as Load by host</query>
         </search>
+        <option name="charting.axisTitleX.text">Load</option>
         <option name="charting.axisTitleX.visibility">collapsed</option>
         <option name="charting.axisY2.enabled">0</option>
         <option name="charting.chart">line</option>
@@ -160,10 +213,80 @@
   </row>
   <row>
     <panel>
-      <title>WARNs and ERRORs from Indexers</title>
+      <html>
+      <h3>SmartStore Activities</h3>
+      Remote bucket upload and download throughput can impact disk I/O availability. Lots of incomplete or error'd status can be an indicator too. 
+      <br>If we are queuing, these stats could be delayed.</br>
+    </html>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Uploads Bytes/sec</title>
+        <search base="cachemgr">
+          <query>where action="upload" | timechart span=$txt_span$ per_second(eval(KB*1024)) as B/s by host</query>
+        </search>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.axisY.abbreviation">auto</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="height">150</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <title>Downloads Bytes/sec</title>
+        <search base="cachemgr">
+          <query>where action="download" | timechart span=$txt_span$ per_second(eval(KB*1024)) as B/s by host</query>
+        </search>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.axisY.abbreviation">auto</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="height">150</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <title>Status</title>
+        <search base="cachemgr">
+          <query>timechart span=$txt_span$ Count by status</query>
+        </search>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.axisY.abbreviation">auto</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="height">150</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <html>
+      <h3>Interesting Log Events</h3>
+      Warnings and Errors from splunkd logs, grouped by component, log level and punct. Some exclusions in place. See search source.
+    </html>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title></title>
       <table>
         <search>
-          <query>index=_internal sourcetype=splunkd log_level IN (WARN ERROR) host=$txt_indexer_match$ splunk_server=$txt_indexer_match$ 
+          <query>index=_internal sourcetype=splunkd log_level IN (WARN ERROR) host=$txt_indexer_match$ splunk_server=$txt_indexer_match$ NOT "bucket might have just been frozen"
 | rex "\s-\s(?&lt;Msg&gt;.*)"
 | stats latest(_time) as _time count latest(Msg) as Sample values(host) as indexers by log_level component punct
 | fields _time component log_level indexers count Sample
