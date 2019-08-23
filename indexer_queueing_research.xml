@@ -161,7 +161,7 @@
           <query>| tstats count where splunk_server=$txt_indexer_match$ host=*spl* index IN (_internal _introspection) by _indextime, _time span=1s
 | eval lag=_indextime-_time
 | rangemap field=lag 0s-10s="0-10" 10s-20s="10-20" 20s-2m="20-120" 2m-1h="120-3500" default="bad TZ?"
-| timechart span=$txt_span$ count by range
+| timechart span=$txt_span$ sum(count) by range
 | eval "0s-10s"=coalesce('0s-10s',0),
        "10s-20s"=coalesce('10s-20s',0),
        "20s-2m"=coalesce('20s-2m',0),
